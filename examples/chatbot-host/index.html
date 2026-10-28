@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chatbot (example host)</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; display: grid; place-items: center; min-height: 100vh; background: Canvas; }
+      main { width: min(480px, calc(100vw - 32px)); padding: 24px; border: 1px solid #8884; border-radius: 16px; }
+      h1 { font-size: 1.1rem; margin: 0 0 4px; }
+      p { margin: 0 0 16px; color: GrayText; }
+      button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #8886; background: ButtonFace; cursor: pointer; }
+      button.primary { background: #111; color: #fff; border-color: #111; }
+      .row { display: flex; gap: 8px; }
+      #status { color: #c22; margin-top: 12px; }
+      /* The auth MFE renders inline, in place of the signed-out panel. */
+      #auth-frame { margin: 0 -24px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Chatbot</h1>
+      <section id="signed-out" hidden>
+        <p>Sign in to keep your conversations.</p>
+        <div class="row">
+          <button id="login" class="primary">Login</button>
+          <button id="register">Create account</button>
+        </div>
+      </section>
+      <section id="signed-in" hidden>
+        <p>Signed in as <strong id="user-name"></strong></p>
+        <button id="logout">Log out</button>
+      </section>
+      <div id="auth-frame" hidden></div>
+      <p id="status" hidden></p>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "@chatbot/auth-mfe-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Embed the auth MFE in the chatbot and receive a one-time handoff code.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}
