@@ -68,6 +68,8 @@ export function openAuthMfe({
   iframe.title = title
   // Forms + scripts + its own cookies; no top navigation, popups or downloads.
   iframe.setAttribute("sandbox", "allow-forms allow-scripts allow-same-origin")
+  // Lets the MFE use passkeys (WebAuthn) inside the iframe. Without it, browsers block them there.
+  iframe.allow = "publickey-credentials-get; publickey-credentials-create"
   iframe.referrerPolicy = "origin"
   iframe.style.cssText = "display:block;width:100%;height:420px;border:0;color-scheme:normal"
 

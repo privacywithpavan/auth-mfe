@@ -26,6 +26,12 @@ export function fakeIdp(overrides: Partial<IdpClient> = {}) {
     register: vi.fn(),
     refresh: vi.fn(),
     logout: vi.fn(async () => {}),
+    sendEmailOtp: vi.fn(),
+    verifyEmailOtp: vi.fn(),
+    passkeyRegistrationOptions: vi.fn(),
+    verifyPasskeyRegistration: vi.fn(),
+    passkeyAuthenticationOptions: vi.fn(),
+    verifyPasskeyAuthentication: vi.fn(),
     ...overrides,
   } satisfies IdpClient
 }

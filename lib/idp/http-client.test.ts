@@ -10,7 +10,7 @@ let idp: Awaited<ReturnType<typeof createMockIdp>>
 let options: HttpIdpClientOptions
 
 beforeAll(async () => {
-  idp = await createMockIdp({ maxFailedLogins: 3 })
+  idp = await createMockIdp({ maxFailedLogins: 3, requireMfa: false })
   const issuer = await idp.start(0)
   options = {
     baseUrl: issuer,
@@ -37,7 +37,7 @@ describe("createHttpIdpClient", () => {
       ok: true,
       user: { sub: "mock-user-alice", email: "alice@example.com", name: "Alice Example", emailVerified: true },
     })
-    if (!result.ok) return
+    if (result.ok !== true) return
     expect(result.tokens.refreshToken).toBeTruthy()
     expect(result.tokens.expiresAt).toBeGreaterThan(Date.now())
   })
@@ -80,7 +80,7 @@ describe("createHttpIdpClient", () => {
 
   it("refreshes with rotation and rejects the old refresh token", async () => {
     const login = await client().login({ email: "alice@example.com", password: SEED_PASSWORD })
-    if (!login.ok) throw new Error("login failed")
+    if (login.ok !== true) throw new Error("login failed")
     const refreshed = await client().refresh(login.tokens.refreshToken!)
     expect(refreshed).toMatchObject({ ok: true, user: { sub: "mock-user-alice" } })
     if (!refreshed.ok) return
@@ -90,7 +90,7 @@ describe("createHttpIdpClient", () => {
 
   it("logout revokes the refresh token", async () => {
     const login = await client().login({ email: "alice@example.com", password: SEED_PASSWORD })
-    if (!login.ok) throw new Error("login failed")
+    if (login.ok !== true) throw new Error("login failed")
     await client().logout(login.tokens)
     expect(await client().refresh(login.tokens.refreshToken!)).toEqual({ ok: false, error: "invalid_grant" })
   })
@@ -131,5 +131,87 @@ describe("createHttpIdpClient", () => {
       password: SEED_PASSWORD,
     })
     expect(result).toEqual({ ok: false, error: "unavailable" })
+  })
+})
+
+describe("createHttpIdpClient with a second factor", () => {
+  let mfaIdp: Awaited<ReturnType<typeof createMockIdp>>
+  let mfaOptions: HttpIdpClientOptions
+  const codes = new Map<string, string>()
+  const alice = { email: "alice@example.com", password: SEED_PASSWORD }
+
+  beforeAll(async () => {
+    mfaIdp = await createMockIdp({ onOtp: (email, code) => codes.set(email, code) })
+    const issuer = await mfaIdp.start(0)
+    mfaOptions = { ...options, baseUrl: issuer, issuer, jwksUrl: `${issuer}/jwks` }
+  })
+  afterAll(() => mfaIdp.stop())
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+  })
+
+  const mfaClient = () => createHttpIdpClient(mfaOptions)
+
+  async function passwordLogin() {
+    const login = await mfaClient().login(alice)
+    if (login.ok !== "mfa_required") throw new Error("expected mfa_required")
+    return login.transaction
+  }
+
+  const wrongCode = (code: string) => (code === "000000" ? "111111" : "000000")
+
+  it("asks for a second factor, then issues tokens for the emailed code", async () => {
+    expect(await mfaClient().login(alice)).toEqual({ ok: "mfa_required", transaction: expect.any(String), hasPasskey: false })
+    const transaction = await passwordLogin()
+    expect(await mfaClient().sendEmailOtp(transaction)).toEqual({ ok: true })
+    const code = codes.get(alice.email)!
+    expect(await mfaClient().verifyEmailOtp(transaction, wrongCode(code))).toEqual({ ok: false, error: "invalid_code" })
+    expect(await mfaClient().verifyEmailOtp(transaction, code)).toMatchObject({ ok: true, user: { sub: "mock-user-alice" } })
+  })
+
+  it("only offers passkey creation once the second factor passed", async () => {
+    const transaction = await passwordLogin()
+    expect(await mfaClient().passkeyRegistrationOptions(transaction)).toEqual({ ok: false, error: "invalid_grant" })
+    await mfaClient().sendEmailOtp(transaction)
+    await mfaClient().verifyEmailOtp(transaction, codes.get(alice.email)!)
+    expect(await mfaClient().passkeyRegistrationOptions(transaction)).toMatchObject({
+      ok: true,
+      options: {
+        rp: { id: "auth.localtest.me" },
+        challenge: expect.any(String),
+        authenticatorSelection: { residentKey: "required", userVerification: "required" },
+      },
+    })
+    expect(await mfaClient().verifyPasskeyRegistration(transaction, { id: "bogus", response: {} })).toEqual({
+      ok: false,
+      error: "passkey_failed",
+    })
+  })
+
+  it("ends the transaction after too many wrong codes", async () => {
+    const transaction = await passwordLogin()
+    await mfaClient().sendEmailOtp(transaction)
+    const wrong = wrongCode(codes.get(alice.email)!)
+    for (let i = 0; i < 4; i++) await mfaClient().verifyEmailOtp(transaction, wrong)
+    expect(await mfaClient().verifyEmailOtp(transaction, wrong)).toEqual({ ok: false, error: "invalid_grant" })
+    expect(await mfaClient().verifyEmailOtp(transaction, codes.get(alice.email)!)).toEqual({ ok: false, error: "invalid_grant" })
+  })
+
+  it("starts a passkey-first login and burns its challenge on a bad response", async () => {
+    const start = await mfaClient().passkeyAuthenticationOptions()
+    expect(start).toMatchObject({ ok: true, transaction: expect.any(String), options: { challenge: expect.any(String), userVerification: "required" } })
+    if (!start.ok) return
+    expect(await mfaClient().verifyPasskeyAuthentication(start.transaction, { id: "unknown", response: {} })).toEqual({
+      ok: false,
+      error: "passkey_failed",
+    })
+    expect(await mfaClient().verifyPasskeyAuthentication(start.transaction, { id: "unknown", response: {} })).toEqual({
+      ok: false,
+      error: "invalid_grant",
+    })
+  })
+
+  it("won't ask for a passkey the user doesn't have", async () => {
+    expect(await mfaClient().passkeyAuthenticationOptions(await passwordLogin())).toEqual({ ok: false, error: "invalid_request" })
   })
 })

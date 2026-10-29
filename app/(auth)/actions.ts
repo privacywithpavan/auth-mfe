@@ -3,7 +3,7 @@
 import "server-only"
 import { headers } from "next/headers"
 
-import { runLogin, runRegister, type AuthFlowDeps } from "@/lib/auth-flow"
+import { runLoginStep, runRegister, startPasskeyLogin, type AuthFlowDeps, type PasskeyChallenge } from "@/lib/auth-flow"
 import type { AuthFormState } from "@/lib/auth-schemas"
 import { getConfig } from "@/lib/config"
 import { getIdpClient } from "@/lib/idp"
@@ -27,8 +27,14 @@ async function clientIp() {
   return forwarded?.split(",")[0]?.trim() || "unknown"
 }
 
+/** Every login step: password, second factor, passkey, passkey enrollment. */
 export async function loginAction(_previous: AuthFormState, formData: FormData): Promise<AuthFormState> {
-  return runLogin(deps(), { formData, ip: await clientIp() })
+  return runLoginStep(deps(), { formData, ip: await clientIp() })
+}
+
+/** A fresh passkey-first challenge, or null when passkeys can't be offered right now. */
+export async function passkeyChallengeAction(parent: string): Promise<PasskeyChallenge | null> {
+  return startPasskeyLogin(deps(), { parent: String(parent), ip: await clientIp() })
 }
 
 export async function registerAction(_previous: AuthFormState, formData: FormData): Promise<AuthFormState> {

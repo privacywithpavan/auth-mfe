@@ -27,7 +27,9 @@ export function securityHeaders(
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    // Passkeys stay allowed for our own origin; the embedding page also has to delegate them (iframe allow=).
+    "Permissions-Policy":
+      "camera=(), microphone=(), geolocation=(), payment=(), publickey-credentials-get=(self), publickey-credentials-create=(self)",
   }
   // X-Frame-Options can't express an allowlist; browsers that support CSP ignore it anyway.
   if (!embeddable) headers["X-Frame-Options"] = "DENY"

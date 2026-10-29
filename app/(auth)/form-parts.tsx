@@ -18,7 +18,7 @@ export function TextField({
   state,
   ...props
 }: { name: FormField; label: string; state: AuthFormState } & Omit<ComponentProps<"input">, "name">) {
-  const error = state.status === "error" ? state.fieldErrors?.[name] : undefined
+  const error = "fieldErrors" in state ? state.fieldErrors?.[name] : undefined
   const errorId = `${name}-error`
   return (
     <div className="grid gap-1.5">
@@ -40,18 +40,26 @@ export function TextField({
 }
 
 export function FormMessage({ state }: { state: AuthFormState }) {
-  if (state.status !== "error" || !state.message) return null
+  return <ErrorMessage message={"message" in state ? state.message : undefined} />
+}
+
+export function ErrorMessage({ message }: { message?: string }) {
+  if (!message) return null
   return (
     <Alert variant="destructive" aria-live="polite">
       <CircleAlertIcon />
-      <AlertDescription>{state.message}</AlertDescription>
+      <AlertDescription>{message}</AlertDescription>
     </Alert>
   )
 }
 
-export function SubmitButton({ pending, children }: { pending: boolean; children: string }) {
+export function SubmitButton({
+  pending,
+  children,
+  ...props
+}: { pending: boolean; children: string } & Omit<ComponentProps<typeof Button>, "children">) {
   return (
-    <Button type="submit" size="lg" className="w-full" disabled={pending}>
+    <Button type="submit" size="lg" className="w-full" disabled={pending} {...props}>
       {pending && <Spinner data-icon="inline-start" />}
       {children}
     </Button>

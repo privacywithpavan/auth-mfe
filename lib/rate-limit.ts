@@ -10,11 +10,16 @@ export type RateLimitRule = {
 
 export type RateLimitResult = { allowed: true } | { allowed: false; retryAfterSeconds: number }
 
-/** Login and sign-up limits. Per-email limits stop credential stuffing against one account. */
+/** Login, sign-up and second-factor limits. Per-email limits stop credential stuffing against one account. */
 export const RATE_LIMITS = {
   loginPerIp: { name: "login:ip", limit: 20, windowSeconds: 15 * 60 },
   loginPerEmail: { name: "login:email", limit: 5, windowSeconds: 15 * 60 },
   registerPerIp: { name: "register:ip", limit: 5, windowSeconds: 60 * 60 },
+  /** Second-factor attempts (codes and passkeys) per account, and code emails per account. */
+  mfaPerEmail: { name: "mfa:email", limit: 10, windowSeconds: 15 * 60 },
+  otpSendPerEmail: { name: "otp-send:email", limit: 5, windowSeconds: 15 * 60 },
+  /** Passkey-first challenges and attempts. Generous: the login page fetches a challenge on load. */
+  passkeyPerIp: { name: "passkey:ip", limit: 30, windowSeconds: 15 * 60 },
 } satisfies Record<string, RateLimitRule>
 
 function rateLimitKey(rule: RateLimitRule, subject: string) {

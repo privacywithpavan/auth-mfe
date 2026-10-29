@@ -1,6 +1,6 @@
 "use client"
 
-import { useActionState } from "react"
+import { startTransition, useActionState, useCallback } from "react"
 import Link from "next/link"
 
 import { initialAuthFormState } from "@/lib/auth-schemas"
@@ -8,12 +8,30 @@ import { initialAuthFormState } from "@/lib/auth-schemas"
 import { loginAction } from "../actions"
 import { useEmbed } from "../embed-context"
 import { CancelButton, FormMessage, SubmitButton, SuccessHandoff, TextField } from "../form-parts"
+import { EnrollPasskey, PasskeySignIn, SecondFactor, type SubmitStep } from "./passkey-steps"
 
 export function LoginForm() {
   const { parentOrigin, query } = useEmbed()
   const [state, formAction, pending] = useActionState(loginAction, initialAuthFormState)
 
-  if (state.status === "success") return <SuccessHandoff state={state} />
+  const submit = useCallback<SubmitStep>(
+    (fields) => {
+      const formData = new FormData()
+      formData.set("parent", parentOrigin)
+      for (const [name, value] of Object.entries(fields)) formData.set(name, value)
+      startTransition(() => formAction(formData))
+    },
+    [parentOrigin, formAction]
+  )
+
+  switch (state.status) {
+    case "success":
+      return <SuccessHandoff state={state} />
+    case "second_factor":
+      return <SecondFactor state={state} formAction={formAction} submit={submit} pending={pending} />
+    case "enroll":
+      return <EnrollPasskey state={state} submit={submit} pending={pending} />
+  }
 
   const values = state.status === "error" ? state.values : undefined
 
@@ -25,7 +43,8 @@ export function LoginForm() {
         name="email"
         label="Email"
         type="email"
-        autoComplete="username"
+        // "webauthn" lets the browser offer saved passkeys here too, next to saved passwords.
+        autoComplete="username webauthn"
         required
         defaultValue={values?.email}
         state={state}
@@ -40,6 +59,7 @@ export function LoginForm() {
       />
       <div className="grid gap-2">
         <SubmitButton pending={pending}>Sign in</SubmitButton>
+        <PasskeySignIn submit={submit} pending={pending} refreshKey={state} />
         <CancelButton />
       </div>
       <p className="text-center text-sm text-muted-foreground">
