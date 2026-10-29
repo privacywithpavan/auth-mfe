@@ -36,28 +36,37 @@ const { hostname, port } = new URL(CHAT_ORIGIN)
 
 // --- TLS: reuse the mkcert CA that `next dev --experimental-https` installed -----------
 
+/** Where Next.js caches the mkcert binary it downloads (same lookup as Next's getCacheDirectory). */
 function mkcertDir() {
-  return process.platform === "darwin"
-    ? path.join(homedir(), "Library/Caches/mkcert")
-    : path.join(process.env.XDG_CACHE_HOME ?? path.join(homedir(), ".cache"), "mkcert")
+  switch (process.platform) {
+    case "darwin":
+      return path.join(homedir(), "Library/Caches/mkcert")
+    case "win32":
+      return path.join(process.env.LOCALAPPDATA ?? path.join(homedir(), "AppData/Local"), "mkcert")
+    default:
+      return path.join(process.env.XDG_CACHE_HOME ?? path.join(homedir(), ".cache"), "mkcert")
+  }
 }
 
+function mkcertBinary() {
+  const dir = mkcertDir()
+  const binary = existsSync(dir) && readdirSync(dir).find((name) => /^mkcert-v.*-(darwin|linux|windows)-/.test(name))
+  if (!binary) {
+    throw new Error("mkcert not found. Run `npm run dev` once first; it installs mkcert and its local CA.")
+  }
+  return path.join(dir, binary)
+}
+
+/** Ask mkcert itself where its CA lives, so it's right on every OS and honours $CAROOT. */
 function caRoot() {
-  return process.platform === "darwin"
-    ? path.join(homedir(), "Library/Application Support/mkcert")
-    : path.join(process.env.XDG_DATA_HOME ?? path.join(homedir(), ".local/share"), "mkcert")
+  return execFileSync(mkcertBinary(), ["-CAROOT"], { encoding: "utf8" }).trim()
 }
 
 function ensureCertificate() {
   const cert = path.join(root, "certificates", `${hostname}.pem`)
   const key = path.join(root, "certificates", `${hostname}-key.pem`)
   if (!existsSync(cert)) {
-    const dir = mkcertDir()
-    const binary = existsSync(dir) && readdirSync(dir).find((name) => name.startsWith("mkcert"))
-    if (!binary) {
-      throw new Error("mkcert not found. Run `npm run dev` once first; it installs mkcert and its local CA.")
-    }
-    execFileSync(path.join(dir, binary), ["-cert-file", cert, "-key-file", key, hostname], { stdio: "inherit" })
+    execFileSync(mkcertBinary(), ["-cert-file", cert, "-key-file", key, hostname], { stdio: "inherit" })
   }
   return { cert: readFileSync(cert), key: readFileSync(key) }
 }
