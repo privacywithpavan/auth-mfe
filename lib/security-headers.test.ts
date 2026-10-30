@@ -16,7 +16,7 @@ describe("securityHeaders", () => {
     expect(headers["X-Frame-Options"]).toBeUndefined()
   })
 
-  it.each(["/", "/api/handoff/exchange", "/login-help", "/loginx"])("forbids framing %s", (path) => {
+  it.each(["/", "/api/session/refresh", "/login-help", "/loginx"])("forbids framing %s", (path) => {
     const headers = securityHeaders(path, options)
     expect(headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'")
     expect(headers["X-Frame-Options"]).toBe("DENY")

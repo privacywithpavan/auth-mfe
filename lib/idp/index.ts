@@ -18,6 +18,7 @@ export function getIdpClient(): IdpClient {
       jwksUrl: config.IDP_JWKS_URL,
       clientId: config.IDP_CLIENT_ID,
       clientSecret: config.IDP_CLIENT_SECRET,
+      sessionTokenAudience: config.SESSION_TOKEN_AUDIENCE,
     })
   }
   return client

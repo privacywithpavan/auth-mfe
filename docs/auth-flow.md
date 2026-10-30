@@ -1,11 +1,48 @@
 # Auth MFE: end-to-end flow
 
-How a chatbot user signs in through the embedded auth MFE, and how the chatbot ends up with its own session.
+How a chatbot user signs in through the embedded auth MFE, how the chatbot backend learns who they are, and how the session is renewed and ended.
 
-- **Chatbot UI** embeds the MFE with `openAuthMfe()` from `packages/chatbot-sdk`.
-- **Auth MFE iframe** is `/login` or `/register` from `app/(auth)/`.
-- **Auth BFF** is this Next.js app's server side: Server Actions, `proxy.ts` and `/api/handoff/*`.
-- **Chatbot backend** redeems the one-time code server-to-server. See `examples/chatbot-host/` for a reference implementation.
+## Participants
+
+- **Chatbot UI** (`chat.example.com`) embeds the MFE with `openAuthMfe()` from `packages/chatbot-sdk`, and renews or ends the session with `refreshAuthSession()` / `logoutAuthSession()`.
+- **Auth MFE iframe** (`auth.example.com`) is `/login` or `/register` from `app/(auth)/`.
+- **Auth BFF** is this Next.js app's server side: Server Actions, `proxy.ts` and `/api/session/*`. It is the only party that talks to the IdP and the only holder of IdP access and refresh tokens.
+- **Chatbot backend** has no session of its own. It verifies the `auth_token` cookie against the IdP's JWKS on every request. See `examples/chatbot-host/` for a reference implementation.
+- **In-house IdP** issues the tokens and publishes the signing keys (JWKS). Locally this is `dev/mock-idp/`.
+
+## Prerequisite: one root domain
+
+The chatbot and the MFE must be served from the same org root domain, set as `SESSION_COOKIE_DOMAIN` (e.g. `example.com`). `getConfig()` refuses to start if `APP_ORIGIN` or any `ALLOWED_PARENT_ORIGINS` entry isn't that domain or one of its subdomains. Because both apps are then same-site, the browser stores and sends `SameSite=Lax` cookies inside the iframe and on the chatbot page's credentialed `fetch` calls to the BFF.
+
+## Cookies
+
+| Cookie | Set by | Attributes | Holds | Read by |
+|---|---|---|---|---|
+| `__Host-auth_session` | Auth BFF | `auth.example.com` only (`__Host-`: Secure, `Path=/`, no `Domain`), HttpOnly, `SameSite=Lax`, `Max-Age` = `SESSION_TTL_SECONDS` (8 h) | Opaque random session id. The store keeps the session under a hash of it, with the user and all IdP tokens, including the refresh token | Auth BFF (`/api/session/*`) |
+| `auth_token` | Auth BFF | `Domain=example.com`, HttpOnly, Secure, `SameSite=Lax`, `Path=/`, `Max-Age` = until the JWT's `exp` | The IdP's **session JWT** | Chatbot backend, plus every other app under the root domain (see Security notes) |
+
+Neither cookie is readable by JavaScript. The chatbot page learns who is signed in only by asking its own backend.
+
+## Session JWT (`auth_token`) contract
+
+The IdP returns `session_token` alongside `access_token`, `id_token` and `refresh_token` in **every** token response: login, second factor, passkey, register and the refresh grant.
+
+| Claim | Value |
+|---|---|
+| `iss` | The IdP issuer (`IDP_ISSUER`) |
+| `aud` | `SESSION_TOKEN_AUDIENCE`, default `chatbot` |
+| `sub`, `email`, `name` | The user. `sub` must equal the ID token's `sub` |
+| `jti` | Unique per token |
+| `iat`, `exp` | Short lifetime: the mock uses 10 minutes |
+
+Header: `alg: RS256`, with the `kid` of a key in the IdP's JWKS.
+
+Who checks what:
+
+- **BFF** (`lib/idp/http-client.ts`): checks the signature against the JWKS, `iss`, `aud`, `exp`, the same `sub` as the ID token, and that `exp` is present. If the token is missing or fails any check, the login or refresh fails as `unavailable`, so a token the BFF wouldn't accept is never set.
+- **Chatbot backend**: checks the signature against the IdP's JWKS, with `algorithms: ["RS256"]`, `iss`, `aud`, `exp` and 30 s of clock tolerance.
+
+## Sign-in and page load
 
 ```mermaid
 sequenceDiagram
@@ -17,9 +54,26 @@ sequenceDiagram
     participant BFF as Auth BFF<br/>(Next.js server)
     participant IdP as In-house IdP
 
-    CU->>CB: GET /api/me
-    CB-->>CU: 401 (not signed in)
-    CU-->>U: Show "Login" button
+    U->>CU: Open the chatbot
+    CU->>CB: GET /api/me (browser sends auth_token if present)
+    alt auth_token present and valid
+        Note over CB: jwtVerify against IdP JWKS
+        CB-->>CU: { user }
+        CU-->>U: Signed in (no iframe)
+    else No auth_token, or it's expired
+        CB-->>CU: 401
+        CU->>BFF: POST /api/session/refresh<br/>(credentials: include, Origin = chat origin)
+        Note over BFF: see "Renewal" below
+        alt BFF session still alive
+            BFF-->>CU: Set-Cookie auth_token (fresh JWT)<br/>200 { user, expires_at }
+            CU->>CB: GET /api/me (retry once)
+            CB-->>CU: { user }
+            CU-->>U: Signed in (no iframe)
+        else No BFF session
+            BFF-->>CU: 401 + clear auth_token
+            CU-->>U: Show "Login" button
+        end
+    end
 
     U->>CU: Click Login
     Note over CU: SDK openAuthMfe():<br/>random nonce (256-bit)
@@ -41,44 +95,105 @@ sequenceDiagram
         IF-->>U: Show error (generic for bad credentials)
     else Valid credentials
         Note over BFF,IdP: Second factor first (passkey or emailed code),<br/>see "Second factor and passkeys" below
-        IdP-->>BFF: access, refresh and ID tokens
-        Note over BFF: Verify ID token (JWKS, iss, aud)<br/>Create session (tokens stay server-side)<br/>Mint one-time code: hashed, 60 s,<br/>bound to session + parent origin
-        BFF-->>IF: Set-Cookie __Host-auth_session (HttpOnly, Secure, Lax)<br/>{ status: success, code }
+        IdP-->>BFF: access, refresh, ID and session tokens
+        Note over BFF: Verify ID token and session token<br/>(JWKS, iss, aud, same sub)<br/>Create session (IdP tokens stay server-side)
+        BFF-->>IF: Set-Cookie __Host-auth_session (host-only)<br/>Set-Cookie auth_token (Domain=example.com)<br/>{ status: success, user }
         IF-->>U: "Signed in as … Returning to the chat…"
-        IF-->>CU: postMessage auth:success { code, nonce }<br/>(targetOrigin = parent)
-        Note over CU: SDK checks origin, source, nonce<br/>removes iframe, resolves { code }
+        IF-->>CU: postMessage auth:success { nonce }<br/>(targetOrigin = parent, no secrets)
+        Note over CU: SDK checks origin, source, nonce<br/>removes iframe, resolves { status: success }
 
-        CU->>CB: POST /api/session { code }
-        Note over CB: Origin == chat origin (CSRF)
-        CB->>BFF: POST /api/handoff/exchange { code, parent_origin }<br/>(Basic: HANDOFF_CLIENT_ID / SECRET)
-        Note over BFF: Check client creds<br/>take code (single use)<br/>parent_origin matches? session still active?
-
-        alt Code replayed / expired / wrong origin
-            BFF-->>CB: 400 invalid_grant
-            CB-->>CU: 401 login_failed
-        else Code valid
-            BFF-->>CB: { user, session_ref, session_expires_at }<br/>(no IdP tokens)
-            Note over CB: Create own session
-            CB-->>CU: Set-Cookie chat_session (HttpOnly, Secure, Lax)<br/>{ user }
-            CU-->>U: Signed in as Alice
-        end
-    end
-
-    opt Logout
-        U->>CU: Click Log out
-        CU->>CB: POST /api/logout
-        CB->>BFF: POST /api/handoff/logout { session_ref } (Basic)
-        BFF->>IdP: POST /api/logout { refresh_token }
-        BFF-->>CB: 204
-        CB-->>CU: 204 + clear chat_session
+        CU->>CB: GET /api/me (browser sends auth_token)
+        Note over CB: jwtVerify against IdP JWKS:<br/>signature, iss, aud = chatbot, exp
+        CB-->>CU: { user }
+        CU-->>U: Signed in as Alice
     end
 ```
+
+`postMessage` now only signals that the cookies are set; it carries no code or token. A forged or replayed `auth:success` gains nothing, because the chatbot still asks its backend, which trusts only a valid JWT.
+
+## Renewal
+
+`auth_token` expires after a few minutes, and the browser then drops it. The BFF session behind it lasts `SESSION_TTL_SECONDS` (8 h, absolute, not sliding).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CU as Chatbot UI
+    participant CB as Chatbot backend
+    participant BFF as Auth BFF
+    participant IdP as In-house IdP
+
+    CU->>CB: GET /api/me
+    CB-->>CU: 401 (auth_token gone or expired)
+    CU->>BFF: POST /api/session/refresh (credentials, Origin)
+    Note over BFF: Origin in ALLOWED_PARENT_ORIGINS? else 403<br/>look up session via __Host-auth_session
+    alt No session, or the 8 h session expired
+        BFF-->>CU: 401 { error: unauthenticated } + clear auth_token
+        Note over CU: Show "Login"
+    else Access token or session JWT expires within 60 s
+        BFF->>IdP: POST /token grant_type=refresh_token
+        alt Refresh accepted
+            IdP-->>BFF: new tokens incl. session_token (refresh token rotated)
+            Note over BFF: verify, store new tokens
+            BFF-->>CU: Set-Cookie auth_token (new JWT)<br/>200 { user, expires_at }
+        else invalid_grant (refresh token revoked or already used)
+            Note over BFF: delete session
+            BFF-->>CU: 401 + clear auth_token
+        else IdP unavailable
+            Note over BFF: keep session only while the current<br/>tokens are still valid, else delete it
+            BFF-->>CU: 200 with the current JWT, or 401
+        end
+    else Tokens still fresh
+        BFF-->>CU: Set-Cookie auth_token (same JWT)<br/>200 { user, expires_at }
+    end
+    CU->>CB: GET /api/me (retry once)
+```
+
+In the SDK, `refreshAuthSession()` resolves `true` on 200 and `false` on 401, and throws `AuthMfeError("unavailable")` on anything else. The example host calls it once on any 401 from `/api/me`, both on page load and after the iframe reports success.
+
+## Logout
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant CU as Chatbot UI
+    participant BFF as Auth BFF
+    participant IdP as In-house IdP
+
+    U->>CU: Click Log out
+    CU->>BFF: POST /api/session/logout (credentials, Origin)
+    Note over BFF: Origin in allowlist? else 403
+    Note over BFF: take (delete) the session from the store
+    BFF->>IdP: POST /api/logout { refresh_token } (best effort)
+    BFF-->>CU: 204 + clear __Host-auth_session and auth_token
+    CU-->>U: Signed out
+```
+
+Logout is idempotent: with no session it still clears both cookies and returns 204.
+
+## BFF session API
+
+Both endpoints are called from the chatbot page with `fetch(…, { method: "POST", credentials: "include" })`. They only answer an `Origin` in `ALLOWED_PARENT_ORIGINS`, and reply with `Access-Control-Allow-Origin: <that origin>`, `Access-Control-Allow-Credentials: true`, `Vary: Origin` and `Cache-Control: no-store`. `OPTIONS` preflight is answered for the same origins.
+
+| Endpoint | Success | Failure |
+|---|---|---|
+| `POST /api/session/refresh` | 200 `{ user: { sub, email, name }, expires_at }` + `Set-Cookie: auth_token` | 401 `{ error: "unauthenticated" }` + clears `auth_token`; 403 `{ error: "forbidden_origin" }` |
+| `POST /api/session/logout` | 204, clears both cookies | 403 `{ error: "forbidden_origin" }` |
+
+## Security notes
+
+- **Every subdomain gets `auth_token`.** Any app under the root domain receives it on its requests. The narrow `aud` stops services that check their own audience from accepting it, and the short lifetime limits what a leaked token is worth. Keep untrusted, third-party or user-generated content off the root domain, and watch for dangling DNS records (subdomain takeover).
+- **Cookie tossing.** A sibling subdomain can plant an `auth_token`, but it must still be a valid IdP-signed JWT to be accepted. `__Host-auth_session` can't be planted from a subdomain.
+- **Logout isn't instant for a token that already leaked.** The JWT stays valid until `exp`. The BFF session and refresh token are revoked immediately, so the token can't be renewed. The same applies to lockouts at the IdP: they take effect at the next refresh.
+- **CSRF:** sibling subdomains count as same-site, so `SameSite=Lax` doesn't stop them. `/api/session/*` check `Origin` against the allowlist, Server Actions check `Origin` against `Host`, and the chatbot backend must check `Origin` on its own state-changing routes.
+- **Framing:** only `ALLOWED_PARENT_ORIGINS` may frame `/login` and `/register` (CSP `frame-ancestors`). Every other page refuses framing entirely.
 
 ## Second factor and passkeys
 
 A password login always needs a second factor. A passkey login needs none, because a passkey with user verification (biometric or PIN) is already two factors. The IdP stores passkeys and verifies every WebAuthn response; the BFF only relays them. The relying party ID is the MFE's host, never the chatbot's.
 
-Steps after the password are tied together by an **MFA ticket** (`lib/mfa-ticket.ts`): random, hashed in the store, 5 minutes, bound to the parent origin, burned when the login completes. The iframe posts it back with each step. It isn't a cookie, because the iframe is cross-site to the chatbot, and browsers don't send `SameSite=Lax` cookies there.
+Steps after the password are tied together by an **MFA ticket** (`lib/mfa-ticket.ts`): random, hashed in the store, 5 minutes, bound to the parent origin, burned when the login completes. The iframe posts it back with each step. It's posted back rather than kept in a cookie, so the login steps don't depend on how a browser treats cookies in iframes.
 
 ```mermaid
 sequenceDiagram
@@ -127,7 +242,7 @@ sequenceDiagram
         BFF->>IdP: POST /api/passkeys/authentication/verify
     end
     IdP-->>BFF: tokens
-    Note over BFF: Burn ticket, create session,<br/>mint handoff code (as above)
+    Note over BFF: Burn ticket, create session,<br/>set cookies (as above)
 ```
 
 Constraints to keep in mind:
@@ -145,4 +260,3 @@ Constraints to keep in mind:
 - **Cancel:** the Cancel button inside the MFE sends `auth:cancel`. The SDK then removes the iframe and resolves `{ status: "cancelled" }`.
 - **Timeout:** if `auth:ready` doesn't arrive within 15 s (the `readyTimeoutMs` option), the SDK throws `AuthMfeError("timeout")`. This is what happens when the chatbot's origin isn't allowed to frame the page.
 - **Register:** works the same way as login, through `registerAction` and the IdP's `POST /api/register`. Its rate limit is per IP only. Sign-up doesn't ask for a second factor; the first password login afterwards does, and offers to create a passkey.
-- **Token refresh:** the auth BFF can refresh an access token that is about to expire through the IdP (`getActiveSession` in `lib/session.ts`). Nothing calls this yet.

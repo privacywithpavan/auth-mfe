@@ -10,8 +10,8 @@ export type AuthErrorReason = "unavailable" | "invalid_embed"
 export type AuthMfeMessage =
   /** The iframe has loaded and is ready for input. */
   | { type: "auth:ready"; nonce: string }
-  /** Login or registration succeeded; the chatbot backend redeems `code`. */
-  | { type: "auth:success"; nonce: string; code: string }
+  /** Login or registration succeeded; the domain-wide auth_token cookie is set. */
+  | { type: "auth:success"; nonce: string }
   /** The flow can't continue in the iframe. */
   | { type: "auth:error"; nonce: string; reason: AuthErrorReason }
   /** The user closed the dialog. */
@@ -36,8 +36,6 @@ export function isAuthMfeMessage(data: unknown): data is AuthMfeEnvelope {
     return false
   }
   switch (message.type) {
-    case "auth:success":
-      return typeof message.code === "string" && message.code.length > 0
     case "auth:error":
       return typeof message.reason === "string"
     case "auth:resize":

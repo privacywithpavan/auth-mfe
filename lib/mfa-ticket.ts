@@ -5,8 +5,8 @@ import { hashToken, randomToken } from "./tokens"
 /**
  * A login in progress: a password login waiting for its second factor, or a
  * passkey-first login waiting for its assertion. The browser holds only the random
- * ticket and posts it back with each step. It can't ride a cookie: the iframe is
- * cross-site to the chatbot, so SameSite=Lax cookies aren't sent there.
+ * ticket and posts it back with each step, so the login steps don't depend on how a
+ * browser treats cookies in iframes.
  */
 export type MfaTicket = {
   kind: "password" | "passkey"

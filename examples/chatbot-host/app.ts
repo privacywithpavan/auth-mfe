@@ -1,4 +1,10 @@
-import { AuthMfeError, openAuthMfe, type AuthMfePage } from "@/packages/chatbot-sdk/src"
+import {
+  AuthMfeError,
+  logoutAuthSession,
+  openAuthMfe,
+  refreshAuthSession,
+  type AuthMfePage,
+} from "@/packages/chatbot-sdk/src"
 
 declare const __AUTH_ORIGIN__: string
 
@@ -16,6 +22,16 @@ function render(user: User | null) {
   if (user) $("user-name").textContent = `${user.name} (${user.email})`
 }
 
+/**
+ * Who's signed in, per our backend. The auth_token JWT is short-lived: on 401, ask the auth
+ * BFF to re-issue it from its session once, then retry.
+ */
+async function fetchUser(): Promise<User | null> {
+  let me = await fetch("/api/me")
+  if (me.status === 401 && (await refreshAuthSession({ authOrigin: __AUTH_ORIGIN__ }))) me = await fetch("/api/me")
+  return me.ok ? (await me.json()).user : null
+}
+
 function showStatus(message: string) {
   status.textContent = message
   status.hidden = !message
@@ -30,14 +46,10 @@ async function login(page: AuthMfePage) {
     const result = await openAuthMfe({ authOrigin: __AUTH_ORIGIN__, container: frame, page })
     if (result.status === "cancelled") return render(null)
 
-    // Hand the one-time code to OUR backend; it redeems it server-to-server.
-    const response = await fetch("/api/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: result.code }),
-    })
-    if (!response.ok) throw new Error("Couldn't complete sign-in.")
-    render((await response.json()).user)
+    // The auth_token cookie is set; OUR backend verifies it.
+    const user = await fetchUser()
+    if (!user) throw new Error("Couldn't complete sign-in.")
+    render(user)
   } catch (error) {
     render(null)
     showStatus(
@@ -54,9 +66,12 @@ $("login").addEventListener("click", () => login("login"))
 $("register").addEventListener("click", () => login("register"))
 
 $("logout").addEventListener("click", async () => {
-  await fetch("/api/logout", { method: "POST" })
-  render(null)
+  try {
+    await logoutAuthSession({ authOrigin: __AUTH_ORIGIN__ })
+    render(null)
+  } catch {
+    showStatus("Couldn't sign out. Try again.")
+  }
 })
 
-const me = await fetch("/api/me")
-render(me.ok ? (await me.json()).user : null)
+render(await fetchUser().catch(() => null))

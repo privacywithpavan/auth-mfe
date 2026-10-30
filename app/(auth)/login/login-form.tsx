@@ -7,7 +7,7 @@ import { initialAuthFormState } from "@/lib/auth-schemas"
 
 import { loginAction } from "../actions"
 import { useEmbed } from "../embed-context"
-import { CancelButton, FormMessage, SubmitButton, SuccessHandoff, TextField } from "../form-parts"
+import { CancelButton, FormMessage, SubmitButton, SuccessNotice, TextField } from "../form-parts"
 import { EnrollPasskey, PasskeySignIn, SecondFactor, type SubmitStep } from "./passkey-steps"
 
 export function LoginForm() {
@@ -26,7 +26,7 @@ export function LoginForm() {
 
   switch (state.status) {
     case "success":
-      return <SuccessHandoff state={state} />
+      return <SuccessNotice state={state} />
     case "second_factor":
       return <SecondFactor state={state} formAction={formAction} submit={submit} pending={pending} />
     case "enroll":

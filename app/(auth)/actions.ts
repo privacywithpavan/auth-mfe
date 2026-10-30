@@ -16,7 +16,6 @@ function deps(): AuthFlowDeps {
     store: getStore(),
     idp: getIdpClient(),
     allowedParentOrigins: config.ALLOWED_PARENT_ORIGINS,
-    handoffTtlSeconds: config.HANDOFF_CODE_TTL_SECONDS,
     startSession,
   }
 }

@@ -9,6 +9,10 @@
  *   POST /api/logout    { refresh_token }          → 204
  *   POST /token         grant_type=refresh_token   (standard OAuth refresh, from oauth2-mock-server)
  *
+ * Every token response ("tokens" below) carries access_token, id_token, refresh_token and
+ * session_token: a short-lived JWT for the org's apps (aud = sessionAudience) that the BFF
+ * sets as the domain-wide auth_token cookie.
+ *
  * Second factor and passkeys. A transaction is the login in progress (5 min); passkey
  * creation is only allowed once its second factor passed:
  *   POST /api/mfa/otp/send                    { mfa_token }            → 204 (code goes to onOtp, logged by default)
@@ -22,7 +26,7 @@
  *
  * Seeded users: alice@example.com / bob@example.com, password "password123".
  */
-import { randomInt, randomUUID, timingSafeEqual } from "node:crypto"
+import { createPrivateKey, randomInt, randomUUID, sign, timingSafeEqual, type JsonWebKey } from "node:crypto"
 import type { ServerResponse } from "node:http"
 import {
   generateAuthenticationOptions,
@@ -40,6 +44,9 @@ export type MockIdpOptions = {
   clientId?: string
   clientSecret?: string
   tokenTtlSeconds?: number
+  /** `aud` of the session JWT. */
+  sessionAudience?: string
+  sessionTokenTtlSeconds?: number
   maxFailedLogins?: number
   /** Password logins need a second factor (default true). */
   requireMfa?: boolean
@@ -72,6 +79,8 @@ export async function createMockIdp({
   clientId = "auth-mfe",
   clientSecret = "dev-client-secret",
   tokenTtlSeconds = 3600,
+  sessionAudience = "chatbot",
+  sessionTokenTtlSeconds = 600,
   maxFailedLogins = 5,
   requireMfa = true,
   rpId = "auth.localtest.me",
@@ -101,6 +110,30 @@ export async function createMockIdp({
     transactions.delete(id)
   }
 
+  /**
+   * The session JWT, signed with the issuer's key. Synchronous (node:crypto rather than
+   * buildToken) so the refresh grant's BeforeResponse hook, which can't await, can mint one.
+   */
+  function sessionToken(user: MockUser) {
+    const key = server.issuer.keys.get()!
+    const now = Math.floor(Date.now() / 1000)
+    const header = { alg: "RS256", typ: "JWT", kid: key.kid }
+    const payload = {
+      iss: server.issuer.url,
+      sub: user.sub,
+      aud: sessionAudience,
+      email: user.email,
+      name: user.name,
+      jti: randomUUID(),
+      iat: now,
+      exp: now + sessionTokenTtlSeconds,
+    }
+    const encode = (part: object) => Buffer.from(JSON.stringify(part)).toString("base64url")
+    const input = `${encode(header)}.${encode(payload)}`
+    const privateKey = createPrivateKey({ key: key as JsonWebKey, format: "jwk" })
+    return `${input}.${sign("sha256", Buffer.from(input), privateKey).toString("base64url")}`
+  }
+
   async function issueTokens(user: MockUser) {
     const claims = (_header: unknown, payload: Record<string, unknown>) => {
       Object.assign(payload, user, { aud: clientId })
@@ -113,6 +146,7 @@ export async function createMockIdp({
       access_token: await server.issuer.buildToken({ scopesOrTransform: claims, expiresIn: tokenTtlSeconds }),
       id_token: await server.issuer.buildToken({ scopesOrTransform: claims, expiresIn: tokenTtlSeconds }),
       refresh_token: refreshToken,
+      session_token: sessionToken(user),
     }
   }
 
@@ -349,6 +383,7 @@ export async function createMockIdp({
     const newToken = randomUUID()
     userByRefreshToken.set(newToken, user)
     response.body.refresh_token = newToken
+    response.body.session_token = sessionToken(user)
   })
 
   server.service.on(Events.BeforeUserinfo, (response, req) => {

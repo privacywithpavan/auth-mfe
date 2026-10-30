@@ -4,7 +4,7 @@ export type HandlerAction =
   | { kind: "ignore" }
   | { kind: "ready" }
   | { kind: "resize"; height: number }
-  | { kind: "success"; code: string }
+  | { kind: "success" }
   | { kind: "cancel" }
   | { kind: "error"; reason: AuthErrorReason }
 
@@ -39,7 +39,7 @@ export function createMessageHandler({
       case "auth:resize":
         return { kind: "resize", height: Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.ceil(message.height))) }
       case "auth:success":
-        return { kind: "success", code: message.code }
+        return { kind: "success" }
       case "auth:cancel":
         return { kind: "cancel" }
       case "auth:error":

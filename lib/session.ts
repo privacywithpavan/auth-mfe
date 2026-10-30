@@ -16,7 +16,7 @@ export type Session = {
 /** Refresh the access token when it has less than this long to live. */
 const REFRESH_LEEWAY_MS = 60_000
 
-/** Store key for a session id. Also the stable reference handoff codes point at. */
+/** Store key for a session id. */
 export function sessionKey(sessionId: string) {
   return `session:${hashToken(sessionId)}`
 }
@@ -44,8 +44,8 @@ export async function readSession(store: KeyValueStore, key: string): Promise<Se
 }
 
 /**
- * Returns the session with a usable access token, refreshing it through the IdP
- * when close to expiry. A rejected refresh ends the session.
+ * Returns the session with a usable access token and session JWT, refreshing both
+ * through the IdP when either is close to expiry. A rejected refresh ends the session.
  */
 export async function getActiveSession(
   store: KeyValueStore,
@@ -54,7 +54,9 @@ export async function getActiveSession(
 ): Promise<Session | undefined> {
   const session = await readSession(store, key)
   if (!session) return undefined
-  if (session.tokens.expiresAt - Date.now() > REFRESH_LEEWAY_MS) return session
+  // Both tokens come from one refresh; renew when the sooner of them runs low.
+  const validUntil = Math.min(session.tokens.expiresAt, session.tokens.sessionTokenExpiresAt)
+  if (validUntil - Date.now() > REFRESH_LEEWAY_MS) return session
   if (!session.tokens.refreshToken) {
     await store.delete(key)
     return undefined
@@ -62,8 +64,8 @@ export async function getActiveSession(
 
   const result = await idp.refresh(session.tokens.refreshToken)
   if (!result.ok) {
-    // IdP outage: keep the session while the current access token is still valid.
-    if (result.error === "unavailable" && session.tokens.expiresAt > Date.now()) return session
+    // IdP outage: keep the session while the current tokens are still valid.
+    if (result.error === "unavailable" && validUntil > Date.now()) return session
     await store.delete(key)
     return undefined
   }

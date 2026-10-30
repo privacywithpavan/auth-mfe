@@ -1,7 +1,6 @@
 import { z } from "zod"
 
 import { loginSchema, otpSchema, registerSchema, type AuthFormState, type FormField } from "./auth-schemas"
-import { mintHandoffCode } from "./handoff"
 import type { IdpClient, IdpError, IdpTokens, IdpUser, PasskeyOptions, PasskeyResponse } from "./idp/types"
 import { consumeMfaTicket, mintMfaTicket, readMfaTicket, updateMfaTicket, type MfaTicket } from "./mfa-ticket"
 import { parseAllowedParentOrigin } from "./origins"
@@ -10,15 +9,14 @@ import type { KeyValueStore } from "./store"
 
 /**
  * The login/register Server Actions, minus Next.js plumbing so they can be tested.
- * Order matters: validate → rate limit → IdP → (second factor) → session → handoff code.
+ * Order matters: validate → rate limit → IdP → (second factor) → session (sets the cookies).
  */
 export type AuthFlowDeps = {
   store: KeyValueStore
   idp: IdpClient
   allowedParentOrigins: readonly string[]
-  handoffTtlSeconds: number
-  /** Creates the BFF session and sets its cookie; returns the session's store key. */
-  startSession: (user: IdpUser, tokens: IdpTokens) => Promise<{ key: string }>
+  /** Creates the BFF session and sets its cookies (including the domain-wide auth_token). */
+  startSession: (user: IdpUser, tokens: IdpTokens) => Promise<void>
 }
 
 export type AuthRequest = {
@@ -69,20 +67,9 @@ function fieldErrors(error: z.ZodError, onField?: FormField): Partial<Record<For
   return errors
 }
 
-async function complete(
-  deps: AuthFlowDeps,
-  parentOrigin: string,
-  user: IdpUser,
-  tokens: IdpTokens
-): Promise<AuthFormState> {
-  const { key } = await deps.startSession(user, tokens)
-  const code = await mintHandoffCode(deps.store, {
-    sessionKey: key,
-    user,
-    parentOrigin,
-    ttlSeconds: deps.handoffTtlSeconds,
-  })
-  return { status: "success", code, user: { name: user.name, email: user.email } }
+async function complete(deps: AuthFlowDeps, user: IdpUser, tokens: IdpTokens): Promise<AuthFormState> {
+  await deps.startSession(user, tokens)
+  return { status: "success", user: { name: user.name, email: user.email } }
 }
 
 export async function runLogin(deps: AuthFlowDeps, { formData, ip }: AuthRequest): Promise<AuthFormState> {
@@ -117,7 +104,7 @@ export async function runLogin(deps: AuthFlowDeps, { formData, ip }: AuthRequest
   if (!result.ok) return { status: "error", message: MESSAGES[result.error], values }
 
   await resetRateLimit(deps.store, RATE_LIMITS.loginPerEmail, email)
-  return complete(deps, parentOrigin, result.user, result.tokens)
+  return complete(deps, result.user, result.tokens)
 }
 
 export async function runRegister(deps: AuthFlowDeps, { formData, ip }: AuthRequest): Promise<AuthFormState> {
@@ -144,7 +131,7 @@ export async function runRegister(deps: AuthFlowDeps, { formData, ip }: AuthRequ
     }
     return { status: "error", message: MESSAGES[result.error], values }
   }
-  return complete(deps, parentOrigin, result.user, result.tokens)
+  return complete(deps, result.user, result.tokens)
 }
 
 // --- Second factor and passkeys --------------------------------------------------
@@ -198,13 +185,13 @@ function passkeyResponse(formData: FormData): PasskeyResponse | undefined {
 /** Burns the ticket and hands off. Losing the race to a concurrent request counts as expired. */
 async function finish(step: Step, user: IdpUser, tokens: IdpTokens): Promise<AuthFormState> {
   if (!(await consumeMfaTicket(step.deps.store, step.token, step.parentOrigin))) return failed("invalid_grant")
-  return complete(step.deps, step.parentOrigin, user, tokens)
+  return complete(step.deps, user, tokens)
 }
 
 async function finishVerified(step: Step): Promise<AuthFormState> {
   const ticket = await consumeMfaTicket(step.deps.store, step.token, step.parentOrigin)
   if (!ticket?.verified) return failed("invalid_grant")
-  return complete(step.deps, step.parentOrigin, ticket.verified.user, ticket.verified.tokens)
+  return complete(step.deps, ticket.verified.user, ticket.verified.tokens)
 }
 
 async function verifyOtp(step: Step): Promise<AuthFormState> {

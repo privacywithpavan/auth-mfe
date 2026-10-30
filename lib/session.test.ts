@@ -49,6 +49,22 @@ describe("sessions", () => {
     expect((await readSession(store, key))?.tokens.refreshToken).toBe("refresh-2")
   })
 
+  it("refreshes when the session JWT is about to expire, even if the access token isn't", async () => {
+    const store = createMemoryStore()
+    const renewed = tokens({ sessionToken: "session-jwt-2" })
+    const idp = fakeIdp({ refresh: vi.fn(async () => ({ ok: true as const, user: alice, tokens: renewed })) })
+    const { key } = await createSession(store, {
+      user: alice,
+      tokens: tokens({ sessionTokenExpiresAt: Date.now() + 30_000 }),
+      ttlSeconds: 3600,
+    })
+
+    const session = await getActiveSession(store, idp, key)
+
+    expect(idp.refresh).toHaveBeenCalledWith("refresh")
+    expect(session?.tokens.sessionToken).toBe("session-jwt-2")
+  })
+
   it("ends the session when the IdP rejects the refresh token", async () => {
     const store = createMemoryStore()
     const idp = fakeIdp({ refresh: vi.fn(async () => ({ ok: false as const, error: "invalid_grant" as const })) })

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`auth-mfe` is an authentication micro-frontend with its own BFF (Next.js 16 App Router + React 19). The chatbot embeds `/login` (or `/register`) from `app/(auth)/` in an iframe. The forms submit through Server Actions, and the BFF calls the IdP's login and sign-up API server-to-server, then keeps the tokens in its own session. The IdP is a local mock in `dev/mock-idp/` for now and the in-house IdP later; all IdP calls go through the adapter in `lib/idp/`. The chatbot receives only a one-time handoff code over `postMessage`, which its backend exchanges server-to-server.
+`auth-mfe` is an authentication micro-frontend with its own BFF (Next.js 16 App Router + React 19). The chatbot embeds `/login` (or `/register`) from `app/(auth)/` in an iframe. The forms submit through Server Actions, and the BFF calls the IdP's login and sign-up API server-to-server, then keeps the tokens in its own session. The IdP is a local mock in `dev/mock-idp/` for now and the in-house IdP later; all IdP calls go through the adapter in `lib/idp/`. The chatbot and the MFE share an org root domain (`SESSION_COOKIE_DOMAIN`): after login the BFF sets a domain-wide, HttpOnly `auth_token` cookie holding the IdP's short-lived session JWT, which the chatbot's backend verifies against the IdP's JWKS; the chatbot page renews it through `POST /api/session/refresh` and ends it with `/api/session/logout`. `postMessage` only signals success. See `docs/auth-flow.md`.
 
 ## Commands
 
@@ -20,7 +20,7 @@ npx vitest run lib/config.test.ts -t "rejects"   # single file / single test
 npx shadcn@latest add <component>   # add a shadcn/ui component into components/ui
 ```
 
-The postMessage protocol and the chatbot-side SDK (`openAuthMfe`) live in `packages/chatbot-sdk/`; `lib/protocol.ts` re-exports the protocol so both sides share one definition. `examples/chatbot-host/` is the reference integration (frontend + backend that redeems the handoff code).
+The postMessage protocol and the chatbot-side SDK (`openAuthMfe`) live in `packages/chatbot-sdk/`; `lib/protocol.ts` re-exports the protocol so both sides share one definition. `examples/chatbot-host/` is the reference integration (frontend + backend that verifies the `auth_token` JWT).
 
 Env: copy `.env.example` to `.env.local`. Config is validated by `getConfig()` in `lib/config.ts` (zod); add new env vars there. `server-only` is aliased to an empty module in `vitest.config.mts` so server modules are testable.
 ## Next.js version caveats

@@ -1,5 +1,5 @@
 /**
- * Small TTL key-value store shared by sessions, handoff codes and rate limits.
+ * Small TTL key-value store shared by sessions, MFA tickets and rate limits.
  * The memory implementation is single-process only; a Redis implementation of the
  * same interface (GETDEL for `take`, INCR + EXPIRE for `increment`) replaces it
  * before running more than one instance.

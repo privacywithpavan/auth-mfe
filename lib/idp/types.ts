@@ -11,6 +11,13 @@ export type IdpTokens = {
   idToken?: string
   /** Epoch milliseconds when the access token expires. */
   expiresAt: number
+  /**
+   * Short-lived session JWT for the org's apps (aud = SESSION_TOKEN_AUDIENCE). Set as the
+   * domain-wide auth_token cookie; the chatbot backend verifies it against the IdP's JWKS.
+   */
+  sessionToken: string
+  /** Epoch milliseconds when the session JWT expires (its `exp`). */
+  sessionTokenExpiresAt: number
 }
 
 export type IdpError =

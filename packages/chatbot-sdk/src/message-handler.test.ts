@@ -19,10 +19,7 @@ function event(message: AuthMfeMessage | unknown, overrides: { origin?: string; 
 
 describe("createMessageHandler", () => {
   it("accepts success from our iframe with our nonce", () => {
-    expect(handle(event(envelope({ type: "auth:success", nonce: NONCE, code: "c0de" })))).toEqual({
-      kind: "success",
-      code: "c0de",
-    })
+    expect(handle(event(envelope({ type: "auth:success", nonce: NONCE })))).toEqual({ kind: "success" })
   })
 
   it.each([
@@ -30,16 +27,16 @@ describe("createMessageHandler", () => {
     ["a look-alike origin", { origin: "https://auth.localtest.me:3000.evil.example" }],
     ["another window on the right origin", { source: {} }],
   ])("ignores messages from %s", (_label, overrides) => {
-    expect(handle(event(envelope({ type: "auth:success", nonce: NONCE, code: "c" }), overrides))).toEqual({
+    expect(handle(event(envelope({ type: "auth:success", nonce: NONCE }), overrides))).toEqual({
       kind: "ignore",
     })
   })
 
   it("ignores a stale nonce and malformed data", () => {
-    expect(handle(event(envelope({ type: "auth:success", nonce: "old-attempt-nonce", code: "c" })))).toEqual({
+    expect(handle(event(envelope({ type: "auth:success", nonce: "old-attempt-nonce" })))).toEqual({
       kind: "ignore",
     })
-    expect(handle(event({ type: "auth:success", nonce: NONCE, code: "c" }))).toEqual({ kind: "ignore" })
+    expect(handle(event({ type: "auth:success", nonce: NONCE }))).toEqual({ kind: "ignore" })
     expect(handle(event("auth:success"))).toEqual({ kind: "ignore" })
   })
 

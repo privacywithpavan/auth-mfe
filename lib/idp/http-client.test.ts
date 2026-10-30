@@ -18,6 +18,7 @@ beforeAll(async () => {
     jwksUrl: `${issuer}/jwks`,
     clientId: "auth-mfe",
     clientSecret: "dev-client-secret",
+    sessionTokenAudience: "chatbot",
   }
 })
 afterAll(() => idp.stop())
@@ -40,6 +41,9 @@ describe("createHttpIdpClient", () => {
     if (result.ok !== true) return
     expect(result.tokens.refreshToken).toBeTruthy()
     expect(result.tokens.expiresAt).toBeGreaterThan(Date.now())
+    expect(result.tokens.sessionToken.split(".")).toHaveLength(3)
+    expect(result.tokens.sessionTokenExpiresAt).toBeGreaterThan(Date.now())
+    expect(result.tokens.sessionTokenExpiresAt).toBeLessThanOrEqual(Date.now() + 600_000)
   })
 
   it("gives the same error for a wrong password and an unknown email", async () => {
@@ -85,6 +89,7 @@ describe("createHttpIdpClient", () => {
     expect(refreshed).toMatchObject({ ok: true, user: { sub: "mock-user-alice" } })
     if (!refreshed.ok) return
     expect(refreshed.tokens.refreshToken).not.toBe(login.tokens.refreshToken)
+    expect(refreshed.tokens.sessionToken).not.toBe(login.tokens.sessionToken)
     expect(await client().refresh(login.tokens.refreshToken!)).toEqual({ ok: false, error: "invalid_grant" })
   })
 
@@ -123,6 +128,43 @@ describe("createHttpIdpClient", () => {
     })
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/ID token rejected.*"iss"/))
     expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/ID token rejected.*"aud"/))
+  })
+
+  it("rejects a session token with the wrong audience", async () => {
+    const result = await client({ sessionTokenAudience: "other" }).login({
+      email: "alice@example.com",
+      password: SEED_PASSWORD,
+    })
+    expect(result).toEqual({ ok: false, error: "unavailable" })
+    expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/session token rejected.*"aud"/))
+  })
+
+  it("rejects a token response without a session token", async () => {
+    const withoutSessionToken: typeof fetch = async (input, init) => {
+      const body = await (await fetch(input, init)).json()
+      delete body.session_token
+      return Response.json(body)
+    }
+    const result = await client({ fetch: withoutSessionToken }).login({
+      email: "alice@example.com",
+      password: SEED_PASSWORD,
+    })
+    expect(result).toEqual({ ok: false, error: "unavailable" })
+  })
+
+  it("rejects a session token issued for another user", async () => {
+    const erin = { email: "erin@example.com", password: "long-enough-1", name: "Erin" }
+    const other = await client().register(erin)
+    if (other.ok !== true) throw new Error("register failed")
+    const swapped: typeof fetch = async (input, init) => {
+      const body = await (await fetch(input, init)).json()
+      return Response.json({ ...body, session_token: other.tokens.sessionToken })
+    }
+    expect(await client({ fetch: swapped }).login({ email: "alice@example.com", password: SEED_PASSWORD })).toEqual({
+      ok: false,
+      error: "unavailable",
+    })
+    expect(console.error).toHaveBeenCalledWith(expect.stringMatching(/session token rejected.*different subject/))
   })
 
   it("reports an unreachable IdP as unavailable", async () => {

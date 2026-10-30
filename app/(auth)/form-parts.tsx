@@ -75,12 +75,12 @@ export function CancelButton() {
   )
 }
 
-/** Hands the one-time code to the chatbot once, then shows a short confirmation. */
-export function SuccessHandoff({ state }: { state: Extract<AuthFormState, { status: "success" }> }) {
+/** Tells the chatbot once that the auth_token cookie is set, then shows a short confirmation. */
+export function SuccessNotice({ state }: { state: Extract<AuthFormState, { status: "success" }> }) {
   const { post } = useEmbed()
   useEffect(() => {
-    post({ type: "auth:success", code: state.code })
-  }, [post, state.code])
+    post({ type: "auth:success" })
+  }, [post])
 
   return (
     <Alert aria-live="polite">

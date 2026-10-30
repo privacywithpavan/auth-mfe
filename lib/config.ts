@@ -28,12 +28,17 @@ const configSchema = z
       .transform((value) => value.split(",").map((item) => item.trim()).filter(Boolean))
       .pipe(z.array(origin).min(1)),
 
-    /** Credentials the chatbot backend uses to call /api/handoff/*. */
-    HANDOFF_CLIENT_ID: z.string().min(1),
-    HANDOFF_CLIENT_SECRET: z.string().min(32),
+    /**
+     * Org root domain the auth_token cookie is scoped to, e.g. example.com. The chatbot
+     * and this app must both be served from it (or its subdomains).
+     */
+    SESSION_COOKIE_DOMAIN: z
+      .string()
+      .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, { message: "must be a bare domain like example.com" }),
+    /** Expected `aud` of the IdP's session JWT; the chatbot backend checks the same value. */
+    SESSION_TOKEN_AUDIENCE: z.string().min(1).default("chatbot"),
 
     SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(8 * 60 * 60),
-    HANDOFF_CODE_TTL_SECONDS: z.coerce.number().int().positive().max(300).default(60),
   })
   .transform((config) => ({
     ...config,
@@ -41,6 +46,13 @@ const configSchema = z
     IDP_JWKS_URL: config.IDP_JWKS_URL ?? `${config.IDP_BASE_URL.replace(/\/+$/, "")}/jwks`,
   }))
   .superRefine((config, ctx) => {
+    const domain = config.SESSION_COOKIE_DOMAIN
+    for (const value of [config.APP_ORIGIN, ...config.ALLOWED_PARENT_ORIGINS]) {
+      const { hostname } = new URL(value)
+      if (hostname !== domain && !hostname.endsWith(`.${domain}`)) {
+        ctx.addIssue({ code: "custom", message: `${value} must be on SESSION_COOKIE_DOMAIN (${domain})` })
+      }
+    }
     if (config.NODE_ENV !== "production") return
     for (const value of [config.APP_ORIGIN, config.IDP_BASE_URL, ...config.ALLOWED_PARENT_ORIGINS]) {
       if (!value.startsWith("https://")) {

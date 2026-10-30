@@ -1,13 +1,15 @@
 /**
- * Chatbot-side SDK for embedding the auth MFE.
+ * Chatbot-side SDK for embedding the auth MFE. The chatbot and the MFE must share an org
+ * root domain: on success the MFE sets an HttpOnly `auth_token` cookie on that domain
+ * (a short-lived JWT signed by the IdP), which YOUR backend verifies against the IdP's JWKS.
  *
  *   const result = await openAuthMfe({ authOrigin: "https://auth.example.com", container })
  *   if (result.status === "success") {
- *     // Send result.code to YOUR backend, which redeems it at POST {authOrigin}/api/handoff/exchange.
+ *     // The cookie is set; ask your backend who the user is.
  *   }
  *
- * The code is single-use and expires in about a minute. Never redeem it from the browser:
- * the exchange needs the chatbot backend's client secret.
+ * The JWT lives a few minutes. When your backend rejects it as expired, call
+ * refreshAuthSession() and retry; logoutAuthSession() ends the session everywhere.
  */
 import { createMessageHandler } from "./message-handler"
 
@@ -30,7 +32,7 @@ export type OpenAuthMfeOptions = {
   title?: string
 }
 
-export type AuthMfeResult = { status: "success"; code: string } | { status: "cancelled" }
+export type AuthMfeResult = { status: "success" } | { status: "cancelled" }
 
 export class AuthMfeError extends Error {
   constructor(readonly reason: "timeout" | "unavailable" | "invalid_embed") {
@@ -88,7 +90,7 @@ export function openAuthMfe({
           iframe.style.height = `${action.height}px`
           break
         case "success":
-          finish(() => resolve({ status: "success", code: action.code }))
+          finish(() => resolve({ status: "success" }))
           break
         case "cancel":
           finish(() => resolve({ status: "cancelled" }))
@@ -115,4 +117,21 @@ export function openAuthMfe({
     signal?.addEventListener("abort", onAbort, { once: true })
     container.append(iframe)
   })
+}
+
+/**
+ * Asks the MFE's BFF to re-issue the auth_token cookie from its session. Resolves to false
+ * when there's no session left (the user has to sign in again).
+ */
+export async function refreshAuthSession({ authOrigin }: { authOrigin: string }): Promise<boolean> {
+  const response = await fetch(new URL("/api/session/refresh", authOrigin), { method: "POST", credentials: "include" })
+  if (response.ok) return true
+  if (response.status === 401) return false
+  throw new AuthMfeError("unavailable")
+}
+
+/** Ends the session at the MFE's BFF and the IdP, and clears its cookies. */
+export async function logoutAuthSession({ authOrigin }: { authOrigin: string }): Promise<void> {
+  const response = await fetch(new URL("/api/session/logout", authOrigin), { method: "POST", credentials: "include" })
+  if (!response.ok) throw new AuthMfeError("unavailable")
 }

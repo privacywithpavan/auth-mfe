@@ -7,13 +7,13 @@ import { initialAuthFormState } from "@/lib/auth-schemas"
 
 import { registerAction } from "../actions"
 import { useEmbed } from "../embed-context"
-import { CancelButton, FormMessage, SubmitButton, SuccessHandoff, TextField } from "../form-parts"
+import { CancelButton, FormMessage, SubmitButton, SuccessNotice, TextField } from "../form-parts"
 
 export function RegisterForm() {
   const { parentOrigin, query } = useEmbed()
   const [state, formAction, pending] = useActionState(registerAction, initialAuthFormState)
 
-  if (state.status === "success") return <SuccessHandoff state={state} />
+  if (state.status === "success") return <SuccessNotice state={state} />
 
   const values = state.status === "error" ? state.values : undefined
 

@@ -12,6 +12,8 @@ export type HttpIdpClientOptions = {
   jwksUrl: string
   clientId: string
   clientSecret: string
+  /** Expected `aud` of the session JWT. */
+  sessionTokenAudience: string
   timeoutMs?: number
   fetch?: typeof fetch
 }
@@ -44,6 +46,7 @@ type TokenResponse = {
   access_token?: unknown
   refresh_token?: unknown
   id_token?: unknown
+  session_token?: unknown
   expires_in?: unknown
 }
 
@@ -53,6 +56,7 @@ export function createHttpIdpClient({
   jwksUrl,
   clientId,
   clientSecret,
+  sessionTokenAudience,
   timeoutMs = 5000,
   fetch: fetchImpl = fetch,
 }: HttpIdpClientOptions): IdpClient {
@@ -82,7 +86,7 @@ export function createHttpIdpClient({
     return "unavailable"
   }
 
-  /** Turns an IdP token response into our types, verifying the ID token. */
+  /** Turns an IdP token response into our types, verifying the ID and session tokens. */
   async function toResult(response: Response, action: string): Promise<IdpResult> {
     const body = (await response.json().catch(() => undefined)) as
       | (TokenResponse & { error?: unknown })
@@ -90,9 +94,9 @@ export function createHttpIdpClient({
 
     if (!response.ok) return { ok: false, error: errorOf(response, body, action) }
 
-    const { access_token, refresh_token, id_token, expires_in } = body ?? {}
-    if (typeof access_token !== "string" || typeof id_token !== "string") {
-      console.error(`[idp] ${action}: token response is missing access_token or id_token`)
+    const { access_token, refresh_token, id_token, session_token, expires_in } = body ?? {}
+    if (typeof access_token !== "string" || typeof id_token !== "string" || typeof session_token !== "string") {
+      console.error(`[idp] ${action}: token response is missing access_token, id_token or session_token`)
       return { ok: false, error: "unavailable" }
     }
 
@@ -113,11 +117,25 @@ export function createHttpIdpClient({
       return { ok: false, error: "unavailable" }
     }
 
+    // The session token goes to the browser and other apps; never set one we wouldn't accept.
+    let sessionTokenExpiresAt: number
+    try {
+      const { payload } = await jwtVerify(session_token, jwks, { issuer, audience: sessionTokenAudience })
+      if (payload.sub !== user.sub) throw new Error("session token is for a different subject")
+      if (typeof payload.exp !== "number") throw new Error("session token has no exp")
+      sessionTokenExpiresAt = payload.exp * 1000
+    } catch (error) {
+      console.error(`[idp] ${action}: session token rejected: ${(error as Error).message}`)
+      return { ok: false, error: "unavailable" }
+    }
+
     const tokens: IdpTokens = {
       accessToken: access_token,
       refreshToken: typeof refresh_token === "string" ? refresh_token : undefined,
       idToken: id_token,
       expiresAt: Date.now() + (typeof expires_in === "number" ? expires_in : 300) * 1000,
+      sessionToken: session_token,
+      sessionTokenExpiresAt,
     }
     return { ok: true, user, tokens }
   }

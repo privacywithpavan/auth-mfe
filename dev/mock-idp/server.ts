@@ -9,6 +9,8 @@
  * MOCK_IDP_RP_ID          WebAuthn RP ID (default auth.localtest.me)
  * MOCK_IDP_ORIGIN         origin passkey ceremonies must come from (default https://auth.localtest.me:3000)
  * MOCK_IDP_REQUIRE_MFA    "false" lets password logins skip the second factor
+ * MOCK_IDP_SESSION_AUDIENCE     aud of the session JWT (default chatbot)
+ * MOCK_IDP_SESSION_TTL_SECONDS  session JWT lifetime (default 600); lower it to exercise refresh
  *
  * Emailed one-time codes are printed to the console.
  */
@@ -22,6 +24,10 @@ async function main() {
     rpId: process.env.MOCK_IDP_RP_ID,
     expectedOrigin: process.env.MOCK_IDP_ORIGIN,
     requireMfa: process.env.MOCK_IDP_REQUIRE_MFA !== "false",
+    sessionAudience: process.env.MOCK_IDP_SESSION_AUDIENCE,
+    sessionTokenTtlSeconds: process.env.MOCK_IDP_SESSION_TTL_SECONDS
+      ? Number(process.env.MOCK_IDP_SESSION_TTL_SECONDS)
+      : undefined,
   })
   const issuer = await idp.start(Number(process.env.MOCK_IDP_PORT ?? 9000))
   console.log(`Mock IdP: ${issuer} (client ${clientId ?? "auth-mfe"})`)

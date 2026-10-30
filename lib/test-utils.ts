@@ -15,6 +15,8 @@ export function tokens(overrides: Partial<IdpTokens> = {}): IdpTokens {
     refreshToken: "refresh",
     idToken: "id",
     expiresAt: Date.now() + 3600_000,
+    sessionToken: "session-jwt",
+    sessionTokenExpiresAt: Date.now() + 600_000,
     ...overrides,
   }
 }

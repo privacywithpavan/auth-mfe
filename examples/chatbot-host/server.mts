@@ -6,35 +6,37 @@
  *   npm run dev        # auth MFE on https://auth.localtest.me:3000
  *   npm run chat-host  # this, on https://chat.localtest.me:4000
  *
- * Reads HANDOFF_CLIENT_ID / HANDOFF_CLIENT_SECRET from .env.local (same values the
- * auth MFE expects). CHAT_ORIGIN and AUTH_ORIGIN override the defaults.
+ * After login the auth MFE sets an HttpOnly `auth_token` cookie on the shared root domain:
+ * a short-lived JWT signed by the IdP. This backend has no session of its own; it verifies
+ * that JWT against the IdP's JWKS on every request. Renewal and logout go from the browser
+ * straight to the auth BFF (refreshAuthSession / logoutAuthSession in the SDK).
+ *
+ * Reads IDP_ISSUER / IDP_JWKS_URL / SESSION_TOKEN_AUDIENCE from .env.local (falling back to
+ * IDP_BASE_URL and the mock IdP's defaults). CHAT_ORIGIN and AUTH_ORIGIN override the defaults.
  */
 import { execFileSync } from "node:child_process"
-import { randomBytes } from "node:crypto"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { createServer, request as httpsRequest } from "node:https"
+import { createServer } from "node:https"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { homedir } from "node:os"
 import path from "node:path"
 
 import { build } from "esbuild"
+import { createRemoteJWKSet, jwtVerify } from "jose"
 
 const CHAT_ORIGIN = process.env.CHAT_ORIGIN ?? "https://chat.localtest.me:4000"
 const AUTH_ORIGIN = process.env.AUTH_ORIGIN ?? "https://auth.localtest.me:3000"
-const CLIENT_ID = process.env.HANDOFF_CLIENT_ID
-const CLIENT_SECRET = process.env.HANDOFF_CLIENT_SECRET
-const COOKIE = "chat_session"
-
-if (!CLIENT_ID || !CLIENT_SECRET) {
-  console.error("HANDOFF_CLIENT_ID and HANDOFF_CLIENT_SECRET must be set (run via `npm run chat-host`).")
-  process.exit(1)
-}
+const IDP_BASE_URL = (process.env.IDP_BASE_URL ?? "http://localhost:9000").replace(/\/+$/, "")
+const IDP_ISSUER = process.env.IDP_ISSUER ?? IDP_BASE_URL
+const IDP_JWKS_URL = process.env.IDP_JWKS_URL ?? `${IDP_BASE_URL}/jwks`
+const AUDIENCE = process.env.SESSION_TOKEN_AUDIENCE ?? "chatbot"
+const COOKIE = "auth_token"
 
 const here = import.meta.dirname
 const root = path.resolve(here, "../..")
 const { hostname, port } = new URL(CHAT_ORIGIN)
 
-// --- TLS: reuse the mkcert CA that `next dev --experimental-https` installed -----------
+// --- TLS: a cert from the mkcert CA that `next dev --experimental-https` installed ------
 
 /** Where Next.js caches the mkcert binary it downloads (same lookup as Next's getCacheDirectory). */
 function mkcertDir() {
@@ -57,11 +59,6 @@ function mkcertBinary() {
   return path.join(dir, binary)
 }
 
-/** Ask mkcert itself where its CA lives, so it's right on every OS and honours $CAROOT. */
-function caRoot() {
-  return execFileSync(mkcertBinary(), ["-CAROOT"], { encoding: "utf8" }).trim()
-}
-
 function ensureCertificate() {
   const cert = path.join(root, "certificates", `${hostname}.pem`)
   const key = path.join(root, "certificates", `${hostname}-key.pem`)
@@ -71,58 +68,32 @@ function ensureCertificate() {
   return { cert: readFileSync(cert), key: readFileSync(key) }
 }
 
-const authCa = readFileSync(path.join(caRoot(), "rootCA.pem"))
-
-// --- Backend: sessions and the server-to-server calls to the auth BFF -------------------
+// --- Backend: verify the IdP-signed auth_token cookie ----------------------------------
 
 type ChatUser = { sub: string; email: string; name: string }
-type ChatSession = { user: ChatUser; authSessionRef: string; expiresAt: number }
-const sessions = new Map<string, ChatSession>()
 
-/** POSTs JSON to the auth BFF with the chatbot backend's client credentials. */
-function callAuth(pathname: string, body: unknown): Promise<{ status: number; json: unknown }> {
-  const payload = JSON.stringify(body)
-  return new Promise((resolve, reject) => {
-    const req = httpsRequest(
-      new URL(pathname, AUTH_ORIGIN),
-      {
-        method: "POST",
-        ca: authCa,
-        auth: `${CLIENT_ID}:${CLIENT_SECRET}`,
-        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
-        timeout: 5000,
-      },
-      (res) => {
-        let text = ""
-        res.on("data", (chunk) => (text += chunk))
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, json: text ? JSON.parse(text) : undefined }))
-      }
-    )
-    req.on("timeout", () => req.destroy(new Error("auth BFF timed out")))
-    req.on("error", reject)
-    req.end(payload)
-  })
-}
+const jwks = createRemoteJWKSet(new URL(IDP_JWKS_URL))
 
-function readSessionId(req: IncomingMessage) {
+function readAuthToken(req: IncomingMessage) {
   return req.headers.cookie?.match(new RegExp(`(?:^|; )${COOKIE}=([^;]+)`))?.[1]
 }
 
-function currentSession(req: IncomingMessage) {
-  const id = readSessionId(req)
-  const session = id ? sessions.get(id) : undefined
-  if (session && session.expiresAt > Date.now()) return { id: id!, session }
-  if (id) sessions.delete(id)
-  return undefined
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let text = ""
-  for await (const chunk of req) text += chunk
+/** The signed-in user, or undefined when the cookie is missing, expired or not from our IdP. */
+async function currentUser(req: IncomingMessage): Promise<ChatUser | undefined> {
+  const token = readAuthToken(req)
+  if (!token) return undefined
   try {
-    return JSON.parse(text)
-  } catch {
-    return {}
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: IDP_ISSUER,
+      audience: AUDIENCE,
+      algorithms: ["RS256"],
+      clockTolerance: 30,
+    })
+    if (typeof payload.sub !== "string" || typeof payload.email !== "string") return undefined
+    return { sub: payload.sub, email: payload.email, name: typeof payload.name === "string" ? payload.name : payload.email }
+  } catch (error) {
+    console.warn(`[chat-host] auth_token rejected: ${(error as Error).message}`)
+    return undefined
   }
 }
 
@@ -131,48 +102,15 @@ function send(res: ServerResponse, status: number, body?: unknown, headers: Reco
   res.end(body === undefined ? undefined : JSON.stringify(body))
 }
 
-const sessionCookie = (value: string, maxAge: number) =>
-  `${COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
-
 async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: string) {
   if (pathname === "/api/me" && req.method === "GET") {
-    const current = currentSession(req)
-    return current ? send(res, 200, { user: current.session.user }) : send(res, 401, { error: "unauthenticated" })
+    const user = await currentUser(req)
+    return user ? send(res, 200, { user }) : send(res, 401, { error: "unauthenticated" })
   }
 
-  // State-changing calls: same-origin only (CSRF).
-  if (req.method !== "POST") return send(res, 405, { error: "method_not_allowed" })
-  if (req.headers.origin !== CHAT_ORIGIN) return send(res, 403, { error: "bad_origin" })
-
-  if (pathname === "/api/session") {
-    const { code } = await readJsonBody(req)
-    if (typeof code !== "string") return send(res, 400, { error: "invalid_request" })
-    const { status, json } = await callAuth("/api/handoff/exchange", { code, parent_origin: CHAT_ORIGIN })
-    if (status !== 200) {
-      console.warn(`[chat-host] exchange failed: ${status} ${JSON.stringify(json)}`)
-      return send(res, 401, { error: "login_failed" })
-    }
-    const { user, session_ref, session_expires_at } = json as {
-      user: ChatUser
-      session_ref: string
-      session_expires_at: string
-    }
-    const id = randomBytes(32).toString("base64url")
-    const expiresAt = Date.parse(session_expires_at)
-    sessions.set(id, { user: { sub: user.sub, email: user.email, name: user.name }, authSessionRef: session_ref, expiresAt })
-    return send(res, 200, { user }, { "set-cookie": sessionCookie(id, Math.floor((expiresAt - Date.now()) / 1000)) })
-  }
-
-  if (pathname === "/api/logout") {
-    const current = currentSession(req)
-    if (current) {
-      sessions.delete(current.id)
-      await callAuth("/api/handoff/logout", { session_ref: current.session.authSessionRef }).catch((error) =>
-        console.warn(`[chat-host] auth logout failed: ${error.message}`)
-      )
-    }
-    return send(res, 204, undefined, { "set-cookie": sessionCookie("", 0) })
-  }
+  // Any state-changing route you add: authenticate with currentUser(), and allow same-origin
+  // only. The cookie is sent by every subdomain of the root domain, so SameSite won't stop CSRF.
+  if (req.method !== "GET" && req.headers.origin !== CHAT_ORIGIN) return send(res, 403, { error: "bad_origin" })
 
   send(res, 404, { error: "not_found" })
 }

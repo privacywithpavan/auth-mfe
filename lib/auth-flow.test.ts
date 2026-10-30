@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { runLogin, runLoginStep, runRegister, startPasskeyLogin, type AuthFlowDeps } from "./auth-flow"
-import { consumeHandoffCode } from "./handoff"
 import type { IdpResult } from "./idp/types"
 import { createMemoryStore } from "./store"
 import { alice, fakeIdp, tokens } from "./test-utils"
@@ -11,12 +10,11 @@ const ok: IdpResult = { ok: true, user: alice, tokens: tokens() }
 
 function setup(idp = fakeIdp({ login: vi.fn(async () => ok), register: vi.fn(async () => ok) })) {
   const store = createMemoryStore()
-  const startSession = vi.fn(async () => ({ key: "session:test" }))
+  const startSession = vi.fn(async () => {})
   const deps: AuthFlowDeps = {
     store,
     idp,
     allowedParentOrigins: [CHAT],
-    handoffTtlSeconds: 60,
     startSession,
   }
   return { deps, store, idp, startSession }
@@ -41,15 +39,13 @@ const register = (fields: Record<string, string> = {}) =>
   })
 
 describe("runLogin", () => {
-  it("logs in, starts a session and mints a code bound to the parent", async () => {
-    const { deps, store, idp, startSession } = setup()
+  it("logs in and starts a session", async () => {
+    const { deps, idp, startSession } = setup()
     const state = await runLogin(deps, { formData: login(), ip: "1.2.3.4" })
 
     expect(idp.login).toHaveBeenCalledWith({ email: "alice@example.com", password: "password123" })
     expect(startSession).toHaveBeenCalledWith(alice, ok.ok && ok.tokens)
-    expect(state).toMatchObject({ status: "success", user: { name: "Alice Example", email: "alice@example.com" } })
-    if (state.status !== "success") return
-    expect(await consumeHandoffCode(store, state.code, CHAT)).toMatchObject({ sessionKey: "session:test", user: alice })
+    expect(state).toEqual({ status: "success", user: { name: "Alice Example", email: "alice@example.com" } })
   })
 
   it("refuses an unlisted parent before touching the IdP", async () => {
@@ -199,9 +195,6 @@ describe("second factor", () => {
     const done = await context.step({ intent: "skip_enroll", ticket })
     expect(done).toMatchObject({ status: "success" })
     expect(context.startSession).toHaveBeenCalledWith(alice, ok.ok && ok.tokens)
-    if (done.status === "success") {
-      expect(await consumeHandoffCode(context.store, done.code, CHAT)).toMatchObject({ user: alice })
-    }
 
     expect(await context.step({ intent: "skip_enroll", ticket })).toMatchObject({
       status: "error",

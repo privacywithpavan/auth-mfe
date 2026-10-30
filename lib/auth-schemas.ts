@@ -54,8 +54,9 @@ export type AuthFormState =
       message?: string
       fieldErrors?: Partial<Record<FormField, string>>
     }
-  /** Second factor passed by email code; offer a passkey for this device before handing off. */
+  /** Second factor passed by email code; offer a passkey for this device before finishing. */
   | { status: "enroll"; ticket: string; options: PasskeyOptions; message?: string }
-  | { status: "success"; code: string; user: { name: string; email: string } }
+  /** Signed in; the session cookies are set. */
+  | { status: "success"; user: { name: string; email: string } }
 
 export const initialAuthFormState: AuthFormState = { status: "idle" }

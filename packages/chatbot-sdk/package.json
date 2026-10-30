@@ -2,7 +2,7 @@
   "name": "@chatbot/auth-mfe-sdk",
   "version": "0.2.0",
   "private": true,
-  "description": "Embed the auth MFE in the chatbot and receive a one-time handoff code.",
+  "description": "Embed the auth MFE in the chatbot; on success the domain-wide auth_token cookie is set.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
