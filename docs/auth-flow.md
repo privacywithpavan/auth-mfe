@@ -4,11 +4,11 @@ How a chatbot user signs in through the embedded auth MFE, how the chatbot backe
 
 ## Participants
 
-- **Chatbot UI** (`chat.example.com`) embeds the MFE with `openAuthMfe()` from `packages/chatbot-sdk`, and renews or ends the session with `refreshAuthSession()` / `logoutAuthSession()`.
-- **Auth MFE iframe** (`auth.example.com`) is `/login` or `/register` from `app/(auth)/`.
+- **Chatbot UI** (`chat.example.com`) embeds the MFE with `openAuthMfe()` from `@auth-mfe/sdk` (`packages/sdk`), and renews or ends the session with `refreshAuthSession()` / `logoutAuthSession()`.
+- **Auth MFE iframe** (`auth.example.com`) is `/login` or `/register` from `apps/auth-mfe/app/(auth)/`.
 - **Auth BFF** is this Next.js app's server side: Server Actions, `proxy.ts` and `/api/session/*`. It is the only party that talks to the IdP and the only holder of IdP access and refresh tokens.
-- **Chatbot backend** has no session of its own. It verifies the `auth_token` cookie against the IdP's JWKS on every request. See `examples/chatbot-host/` for a reference implementation.
-- **In-house IdP** issues the tokens and publishes the signing keys (JWKS). Locally this is `dev/mock-idp/`.
+- **Chatbot backend** has no session of its own. It verifies the `auth_token` cookie against the IdP's JWKS on every request. `@auth-mfe/token-verifier` (`packages/token-verifier`) does the check; `apps/chatbot-host/` is a reference implementation.
+- **In-house IdP** issues the tokens and publishes the signing keys (JWKS). Its API is defined in `packages/idp-contract`. Locally this is `apps/mock-idp/`.
 
 ## Prerequisite: one root domain
 
@@ -39,8 +39,8 @@ Header: `alg: RS256`, with the `kid` of a key in the IdP's JWKS.
 
 Who checks what:
 
-- **BFF** (`lib/idp/http-client.ts`): checks the signature against the JWKS, `iss`, `aud`, `exp`, the same `sub` as the ID token, and that `exp` is present. If the token is missing or fails any check, the login or refresh fails as `unavailable`, so a token the BFF wouldn't accept is never set.
-- **Chatbot backend**: checks the signature against the IdP's JWKS, with `algorithms: ["RS256"]`, `iss`, `aud`, `exp` and 30 s of clock tolerance.
+- **BFF** (`apps/auth-mfe/lib/idp/http-client.ts`): checks the signature against the JWKS, `iss`, `aud`, `exp`, the same `sub` as the ID token, and that `exp` is present. If the token is missing or fails any check, the login or refresh fails as `unavailable`, so a token the BFF wouldn't accept is never set.
+- **Chatbot backend** (`createAuthTokenVerifier` in `@auth-mfe/token-verifier`): checks the signature against the IdP's JWKS, with `algorithms: ["RS256"]`, `iss`, `aud`, `exp` and 30 s of clock tolerance. If the Cookie header carries several `auth_token` values (see cookie tossing below), it tries up to three and accepts the first valid one.
 
 ## Sign-in and page load
 
@@ -193,7 +193,7 @@ Both endpoints are called from the chatbot page with `fetch(…, { method: "POST
 
 A password login always needs a second factor. A passkey login needs none, because a passkey with user verification (biometric or PIN) is already two factors. The IdP stores passkeys and verifies every WebAuthn response; the BFF only relays them. The relying party ID is the MFE's host, never the chatbot's.
 
-Steps after the password are tied together by an **MFA ticket** (`lib/mfa-ticket.ts`): random, hashed in the store, 5 minutes, bound to the parent origin, burned when the login completes. The iframe posts it back with each step. It's posted back rather than kept in a cookie, so the login steps don't depend on how a browser treats cookies in iframes.
+Steps after the password are tied together by an **MFA ticket** (`apps/auth-mfe/lib/mfa-ticket.ts`): random, hashed in the store, 5 minutes, bound to the parent origin, burned when the login completes. The iframe posts it back with each step. It's posted back rather than kept in a cookie, so the login steps don't depend on how a browser treats cookies in iframes.
 
 ```mermaid
 sequenceDiagram
@@ -250,7 +250,7 @@ Constraints to keep in mind:
 - **Iframe delegation:** the embedding page must allow WebAuthn in the iframe (`allow="publickey-credentials-get; publickey-credentials-create"`). `openAuthMfe` does this since SDK 0.2.0. Creating passkeys in a cross-origin iframe is newer than using them, so older browsers may refuse. The UI then shows the error, and the user can choose "Not now".
 - **User activation:** browsers only run WebAuthn right after a click. Options are fetched before the click (on load, or in the previous step's response), never inside it. Passkey autofill is the exception: it runs without a click.
 - **Autofill:** the email field has `autocomplete="username webauthn"`. Saved passwords and saved passkeys then appear in the same suggestion list. Passwords are saved under the MFE's origin, so every chatbot that embeds it shares them.
-  - **Passkey suggestions:** `PasskeySignIn` in `app/(auth)/login/passkey-steps.tsx` reuses the passkey-first challenge for a background autofill request. Picking a passkey from the suggestions signs in the same way as the button.
+  - **Passkey suggestions:** `PasskeySignIn` in `apps/auth-mfe/app/(auth)/login/passkey-steps.tsx` reuses the passkey-first challenge for a background autofill request. Picking a passkey from the suggestions signs in the same way as the button.
   - **Inside the iframe:** browsers usually wait until the user taps the field before suggesting a saved password. Passkey autofill works in local testing. Support in cross-origin iframes isn't documented across browsers, so "Sign in with a passkey" stays as the entry point that always works.
   - **After a cancelled prompt:** if the user dismisses the button's passkey prompt, passkeys drop out of the suggestions until the next server response brings a fresh challenge.
 - **RP ID:** changing it later orphans every passkey. Pick the MFE host or its registrable domain before launch.

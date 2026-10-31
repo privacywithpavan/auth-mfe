@@ -1,0 +1,19 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!.env*.local"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "lint": {},
+    "typecheck": {},
+    "test": {},
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["MOCK_IDP_*", "CHAT_ORIGIN", "AUTH_ORIGIN", "IDP_*", "SESSION_TOKEN_AUDIENCE"]
+    }
+  }
+}

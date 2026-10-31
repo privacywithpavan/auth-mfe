@@ -1,0 +1,21 @@
+{
+  "name": "@auth-mfe/idp-contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Wire contract of the in-house IdP API, shared by the auth BFF and the mock IdP.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@auth-mfe/eslint-config": "workspace:*",
+    "@auth-mfe/tsconfig": "workspace:*",
+    "eslint": "^9",
+    "typescript": "^5"
+  }
+}

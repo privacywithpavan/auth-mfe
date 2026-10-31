@@ -1,0 +1,4 @@
+{
+  "extends": "@auth-mfe/tsconfig/browser.json",
+  "include": ["src", "*.config.ts"]
+}

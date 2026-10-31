@@ -1,0 +1,39 @@
+{
+  "name": "@auth-mfe/sdk",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Embed the auth MFE in the chatbot; on success the domain-wide auth_token cookie is set.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./protocol": {
+        "types": "./dist/protocol.d.ts",
+        "default": "./dist/protocol.js"
+      }
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "lint": "eslint",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@auth-mfe/eslint-config": "workspace:*",
+    "@auth-mfe/tsconfig": "workspace:*",
+    "eslint": "^9",
+    "tsdown": "0.23.1",
+    "typescript": "^5",
+    "vitest": "^5.0.5"
+  }
+}

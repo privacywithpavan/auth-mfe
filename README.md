@@ -1,36 +1,29 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Auth MFE
 
-## Getting Started
+An authentication micro-frontend that a chatbot embeds in an iframe, with its own BFF that talks to the in-house IdP. After sign-in, the BFF sets a short-lived, IdP-signed `auth_token` cookie on the shared root domain, and the chatbot's backend verifies it. See [docs/auth-flow.md](docs/auth-flow.md) for the full flow.
 
-First, run the development server:
+## Layout
+
+- `apps/auth-mfe`: the auth MFE and its BFF (Next.js). The only deployable.
+- `apps/mock-idp`: local mock of the in-house IdP.
+- `apps/chatbot-host`: reference chatbot that embeds the MFE and verifies the cookie.
+- `packages/sdk`: `@auth-mfe/sdk`, the chatbot-side SDK and postMessage protocol.
+- `packages/token-verifier`: `@auth-mfe/token-verifier`, the `auth_token` check for chatbot backends.
+- `packages/idp-contract`: the IdP API contract, shared by the BFF and the mock.
+- `packages/dev-certs`, `packages/tsconfig`, `packages/eslint-config`: dev tooling.
+
+## Getting started
+
+Requires Node 22.12+ and pnpm 12.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp apps/auth-mfe/.env.example apps/auth-mfe/.env.local
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`pnpm dev` opens Turborepo's terminal UI with one log pane per app: pick a pane with `↑`/`↓` (`m` lists the keys, `Ctrl+C` stops everything). To keep each app in its own terminal instead, run `pnpm dev:auth`, `pnpm dev:idp` and `pnpm dev:chat` separately.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Then open https://chat.localtest.me:4000 and sign in as `alice@example.com` / `password123`. The emailed one-time code is printed in the mock IdP's pane (`@auth-mfe/mock-idp`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`pnpm build`, `pnpm lint`, `pnpm typecheck` and `pnpm test` run across the workspace through Turborepo.

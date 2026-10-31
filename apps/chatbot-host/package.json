@@ -1,0 +1,26 @@
+{
+  "name": "@auth-mfe/chatbot-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Reference chatbot (frontend + backend) that embeds the auth MFE. Never deploy this.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@auth-mfe/dev-certs": "workspace:*",
+    "@auth-mfe/sdk": "workspace:*",
+    "@auth-mfe/token-verifier": "workspace:*",
+    "esbuild": "^0.28.2"
+  },
+  "devDependencies": {
+    "@auth-mfe/eslint-config": "workspace:*",
+    "@auth-mfe/tsconfig": "workspace:*",
+    "@types/node": "^24.19.2",
+    "eslint": "^9",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}
